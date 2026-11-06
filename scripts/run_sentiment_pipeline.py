@@ -6,15 +6,28 @@ cron(VPS)やタスクスケジューラ(ローカルPC)から定期的に(例: 1
 外部のスケジューラに実行自体を任せる設計にしている(ExpertTrader側の
 portfolio_trading_bot.pyのような常駐プロセス方式ではなく、cron向けの定期バッチ)。
 
-実行例(リポジトリルートで実行する。パッケージ内の相対インポートを正しく解決するため、
-スクリプトを直接実行するのではなく -m 付きのモジュール実行にしている):
-    python -m scripts.run_sentiment_pipeline --mode medium --lookback-hours 6
+実行例(どのディレクトリから実行しても動く。python -m scripts.run_sentiment_pipeline
+でも実行できるが、その場合はリポジトリルートをカレントディレクトリにする必要がある):
+    python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
 """
 
 import argparse
 import logging
 import os
+import sys
 from datetime import datetime, timedelta, timezone
+
+# 💡 修正(2026-11-06): news_sentiment.xxx という絶対import自体は正しいが、
+# 「python -m scripts.run_sentiment_pipeline」はカレントディレクトリが
+# リポジトリルートと完全に一致している場合しかnews_sentimentパッケージを
+# 解決できず(scriptsパッケージ自体は見つかるのに news_sentiment の方だけ
+# 見つからない、という分かりにくい失敗の仕方をする)、実行場所に依存する
+# 脆さがあった。このファイル自身の位置(__file__)からリポジトリルートを
+# 逆算してsys.pathに加えることで、どのディレクトリから・どちらの実行方法
+# (直接実行 / -m実行)でも確実にnews_sentimentパッケージを解決できるようにする。
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from news_sentiment.fetch_news import RSSNewsSource
 from news_sentiment.sentiment_model import FinBertSentimentModel

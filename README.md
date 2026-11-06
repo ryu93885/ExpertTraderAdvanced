@@ -62,11 +62,12 @@ ExpertTrader側で銘柄ごとに独立したスケーラー・分析モデル�
 
 ```bash
 pip install -r requirements.txt
-# リポジトリルートで実行すること(パッケージ内の絶対インポートを解決するため、
-# スクリプトファイルを直接指定せず -m 付きのモジュール実行にする)
-python -m scripts.run_sentiment_pipeline --mode medium --lookback-hours 6
+python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
 # -> sentiment_output/news_sentiment_medium.csv に1行追記される
 ```
+
+どのディレクトリから実行してもよい(スクリプト自身の位置からリポジトリルートを
+自動的に解決する)。
 
 cron(VPS)やタスクスケジューラ(ローカルPC)で定期実行する想定(例: 1時間ごと)。
 `--lookback-hours`は実行間隔と同じかそれより少し長めに設定し、取りこぼしを防ぐ。
