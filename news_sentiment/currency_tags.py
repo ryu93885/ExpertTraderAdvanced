@@ -11,7 +11,7 @@ aggregate.py側(例: EURUSD_sentiment = EUR_sentiment - USD_sentiment)で行う�
 import re
 from typing import Dict, List
 
-from fetch_news import NewsArticle
+from news_sentiment.fetch_news import NewsArticle
 
 # 💡 キーワードは小文字で比較する(マッチング時に.lower()する)。
 # 誤検出を抑えるため、"AUD" のような3文字の通貨コード単体は誤爆しやすい

@@ -62,7 +62,9 @@ ExpertTrader側で銘柄ごとに独立したスケーラー・分析モデル�
 
 ```bash
 pip install -r requirements.txt
-python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
+# リポジトリルートで実行すること(パッケージ内の絶対インポートを解決するため、
+# スクリプトファイルを直接指定せず -m 付きのモジュール実行にする)
+python -m scripts.run_sentiment_pipeline --mode medium --lookback-hours 6
 # -> sentiment_output/news_sentiment_medium.csv に1行追記される
 ```
 

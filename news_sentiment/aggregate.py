@@ -15,9 +15,9 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from fetch_news import NewsArticle
-from currency_tags import tag_currencies
-from sentiment_model import FinBertSentimentModel
+from news_sentiment.fetch_news import NewsArticle
+from news_sentiment.currency_tags import tag_currencies
+from news_sentiment.sentiment_model import FinBertSentimentModel
 
 logger = logging.getLogger(__name__)
 

@@ -6,21 +6,19 @@ cron(VPS)やタスクスケジューラ(ローカルPC)から定期的に(例: 1
 外部のスケジューラに実行自体を任せる設計にしている(ExpertTrader側の
 portfolio_trading_bot.pyのような常駐プロセス方式ではなく、cron向けの定期バッチ)。
 
-実行例:
-    python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
+実行例(リポジトリルートで実行する。パッケージ内の相対インポートを正しく解決するため、
+スクリプトを直接実行するのではなく -m 付きのモジュール実行にしている):
+    python -m scripts.run_sentiment_pipeline --mode medium --lookback-hours 6
 """
 
 import argparse
 import logging
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "news_sentiment")))
-
-from fetch_news import RSSNewsSource
-from sentiment_model import FinBertSentimentModel
-from aggregate import run_aggregation, append_to_csv
+from news_sentiment.fetch_news import RSSNewsSource
+from news_sentiment.sentiment_model import FinBertSentimentModel
+from news_sentiment.aggregate import run_aggregation, append_to_csv
 
 DEFAULT_SYMBOLS = ["GBPUSD", "EURUSD", "USDJPY", "AUDUSD", "GBPJPY", "EURJPY", "GOLD"]
 OUTPUT_DIR = "sentiment_output"
