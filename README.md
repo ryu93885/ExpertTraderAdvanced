@@ -20,16 +20,31 @@ ExpertTrader(価格・テクニカル指標ベースのポートフォリオAI�
 5. 対象モードはmedium・longのみ(shortはスキャルピング帯で保有時間が短く、経済ニュース
    の影響を受けにくいこと、成績面でも採用予定がないことから対象外)。
 
-## アーキテクチャ(現時点の設計案)
+## アーキテクチャ
 
 ```
 news_sentiment/
-  sentiment_model.py   … FinBERTのロードと推論(実装済み)
-  (fetch_news.py)       … ニュース記事の収集(ソース未確定、下記「未決定事項」参照)
-  (aggregate.py)         … 銘柄/通貨ごとのセンチメントスコア集計・CSV出力
+  sentiment_model.py   … FinBERTのロードと推論
+  fetch_news.py         … ニュース記事の収集(NewsSource抽象クラス + RSS実装)
+  currency_tags.py      … 記事を通貨(USD/EUR/GBP/JPY/AUD/GOLD)にタグ付け
+  aggregate.py           … 通貨別センチメント集計 → 銘柄ペア別センチメントの導出・CSV出力
 scripts/
-  (run_sentiment_pipeline.py) … 上記を定期実行するエントリーポイント(cron/タスクスケジューラ想定)
+  run_sentiment_pipeline.py … 上記を定期実行するエントリーポイント(cron/タスクスケジューラ想定)
 ```
+
+### ニュース取得元: RSSフィード(将来の差し替えを前提とした設計)
+
+ニュース収集は `NewsSource` という抽象クラスの背後に隠してある。現時点では無料で
+使えるRSSフィード(`RSSNewsSource`、ForexLive/DailyFX/Investing.com/FXStreet等を
+`fetch_news.py`の`RSS_FEEDS`に列挙)のみを実装しているが、将来的に商用ニュースAPI等へ
+切り替えたくなった場合は、`NewsSource`を継承した新しいクラスを追加するだけでよく、
+`aggregate.py`以降のパイプラインは変更不要。
+
+⚠️ `RSS_FEEDS`に列挙したURLは、一般に公開されている主要な金融・FX系ニュースサイトの
+フィードだが、本セッション(Claude Codeのサンドボックス環境)はネットワークポリシー上
+これら外部サイトに直接接続できず、疎通確認ができていない。ローカルPC/VPSで実際に
+実行する際に、一度動作確認(記事が0件でないか)をしてください。フィードが無効化されて
+いた場合は、該当URLをリストから削除・差し替えるだけで済みます。
 
 ### 通貨ペア vs 通貨単位での集計について
 
@@ -43,12 +58,23 @@ USDJPY・EURUSD・AUDUSD・GBPUSD全てに同時に影響しますが、影響�
 想定しています(例: `EURUSD_sentiment = EUR_sentiment - USD_sentiment`)。これは
 ExpertTrader側で銘柄ごとに独立したスケーラー・分析モデルを使っている設計とも馴染みます。
 
-## 未決定事項(要相談)
+## 使い方
 
-**ニュースデータの取得元が未確定です。** 候補:
-- NewsAPI.org等の商用ニュースAPI(無料枠あり、要APIキー、レート制限あり)
-- Reuters/ForexLive/DailyFX等のRSSフィード(無料・APIキー不要だが、利用規約の確認が必要)
-- 経済指標カレンダー系API(ForexFactory等。個別ニュース記事というより指標発表イベント)
+```bash
+pip install -r requirements.txt
+python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
+# -> sentiment_output/news_sentiment_medium.csv に1行追記される
+```
 
-既にお持ちのサービス・契約があればそれに合わせて実装します。特になければ、まずは
-無料で試せるRSSベースの構成から始めることを提案します。
+cron(VPS)やタスクスケジューラ(ローカルPC)で定期実行する想定(例: 1時間ごと)。
+`--lookback-hours`は実行間隔と同じかそれより少し長めに設定し、取りこぼしを防ぐ。
+
+## 未決定事項・今後の課題
+
+- RSSフィードの実際の疎通確認(上記「ニュース取得元」の注記を参照)。
+- `currency_tags.py`のキーワード一致は簡易的なルールベース実装。誤検出・検出漏れが
+  あれば、キーワードリストの調整、または将来的にはNER(固有表現抽出)等への
+  置き換えを検討する。
+- ExpertTrader本体との実際の統合(本リポジトリのCSV出力を、ExpertTrader側の
+  `PortfolioFXEnv`の観測ベクトルにどう組み込むか)は未着手(条件5の「将来的な
+  組み合わせ」に該当。今回は受け入れやすい出力形式の設計までが範囲)。
