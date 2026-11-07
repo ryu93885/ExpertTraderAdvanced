@@ -71,13 +71,72 @@ python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
 
 cron(VPS)やタスクスケジューラ(ローカルPC)で定期実行する想定(例: 1時間ごと)。
 `--lookback-hours`は実行間隔と同じかそれより少し長めに設定し、取りこぼしを防ぐ。
+実行ログは`logs/run_sentiment_pipeline.log`に自動保存される(5MB×5世代でローテーション。
+コンソール出力が残らないcron/タスクスケジューラ環境でも、常にファイルで確認できる)。
+
+## 定期実行の設定
+
+### cron (VPS / Linuxサーバー)
+
+`crontab -e`で以下のように登録する(例: 毎時5分に、medium モードを過去1時間分の
+ニュースで実行):
+
+```cron
+5 * * * * cd /path/to/ExpertTraderAdvanced && /path/to/venv/bin/python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 1.5 >> logs/cron_stdout.log 2>&1
+```
+
+- `cd`でリポジトリルートに移動してから実行する(`sentiment_output/`・`logs/`は
+  カレントディレクトリ基準の相対パスで作られるため)。
+- Pythonは仮想環境のものを絶対パスで指定するのが確実(cronは`PATH`が最小限の
+  環境で動くため、`python`や`python3`だけだと意図したインタプリタに届かないことがある)。
+- `--lookback-hours`は実行間隔(ここでは1時間)より少し長め(1.5時間)にして、
+  cronの起動遅延等による取りこぼしを防ぐ。
+- `>> logs/cron_stdout.log 2>&1`は保険。通常のログは上記の通りスクリプト自身が
+  `logs/run_sentiment_pipeline.log`に記録するので無くても動くが、万一スクリプト
+  起動前の段階(Pythonが見つからない等)で失敗した場合はこちらにしか残らない。
+- longモードも併用する場合は、同じ書式で2行目を追加する(`--mode long`)。
+
+### タスクスケジューラ (ローカルPC / Windows)
+
+1. 「タスクスケジューラ」を開き、「タスクの作成」を選択
+2. 「全般」タブ: 名前を入力(例: `ExpertTraderAdvanced_sentiment`)。「ユーザーが
+   ログオンしているかどうかにかかわらず実行する」を選ぶとPC起動中は確実に動く
+3. 「トリガー」タブ: 新規作成 →「毎日」→ 詳細設定で「繰り返し間隔: 1時間」
+   「継続時間: 無期限」に設定
+4. 「操作」タブ: 新規作成 →
+   - プログラム/スクリプト: 仮想環境の`python.exe`へのフルパス
+     (例: `C:\path\to\venv\Scripts\python.exe`)
+   - 引数の追加: `scripts\run_sentiment_pipeline.py --mode medium --lookback-hours 1.5`
+   - 開始(作業)フォルダー: リポジトリのルートフォルダ(例: `C:\path\to\ExpertTraderAdvanced`)
+     ← これを必ず設定する。空のままだとスクリプトが相対パスで探す
+     `sentiment_output/`・`logs/`が別の場所に作られてしまう
+5. 保存後、一度「実行」で手動起動して`logs/run_sentiment_pipeline.log`に
+   記録が残ることを確認する
+
+### 複数回分の出力・ログの確認方法
+
+- センチメントの集計結果: `sentiment_output/news_sentiment_{mode}.csv`に1実行=1行で
+  追記され続ける。`time`列で時系列に並んでいるので、Excel/pandasで開いて
+  推移を確認できる。
+- 実行ログ: `logs/run_sentiment_pipeline.log`(最新)。featureごとの記事取得件数や
+  warning(例: 特定フィードの取得失敗、対象期間の記事0件)もここに残る。
+  特に立ち上げ直後は、記事件数が極端に少ない/0が続いていないか数回分を見て、
+  RSSフィードが継続的に機能しているか確認するとよい。
 
 ## 未決定事項・今後の課題
 
-- RSSフィードの実際の疎通確認(上記「ニュース取得元」の注記を参照)。
 - `currency_tags.py`のキーワード一致は簡易的なルールベース実装。誤検出・検出漏れが
   あれば、キーワードリストの調整、または将来的にはNER(固有表現抽出)等への
-  置き換えを検討する。
+  置き換えを検討する(2026-11-06の実機検証では、1回の実行でAUD関連記事が0件になる
+  ケースを確認している。複数回分のログを見て傾向を判断する)。
 - ExpertTrader本体との実際の統合(本リポジトリのCSV出力を、ExpertTrader側の
   `PortfolioFXEnv`の観測ベクトルにどう組み込むか)は未着手(条件5の「将来的な
   組み合わせ」に該当。今回は受け入れやすい出力形式の設計までが範囲)。
+
+## 動作確認済み事項
+
+- 2026-11-06: ローカルPCでの実機実行により、RSSフィード(`fetch_news.py`の
+  `RSS_FEEDS`)からの取得・FinBERTでのセンチメント推論・通貨ペア別センチメントの
+  導出・CSV出力までの一連のパイプラインが正しく動作することを確認済み。
+  7銘柄・5通貨の差分関係(例: GBPJPY = GBPUSD由来のGBP成分 + USDJPY由来の
+  (−USD→JPY)成分)が実データ上でも数値的に矛盾なく成立していることも検証済み。

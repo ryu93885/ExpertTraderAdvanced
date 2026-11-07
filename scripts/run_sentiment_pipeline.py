@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from logging.handlers import RotatingFileHandler
 
 # 💡 修正(2026-11-06): news_sentiment.xxx という絶対import自体は正しいが、
 # 「python -m scripts.run_sentiment_pipeline」はカレントディレクトリが
@@ -37,13 +38,29 @@ DEFAULT_SYMBOLS = ["GBPUSD", "EURUSD", "USDJPY", "AUDUSD", "GBPJPY", "EURJPY", "
 OUTPUT_DIR = "sentiment_output"
 
 
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "run_sentiment_pipeline.log")
+
+
 def setup_logger():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    # 💡 追加(2026-11-07): cron/タスクスケジューラからの定期実行では、コンソール出力
+    # (標準出力)は呼び出し元が明示的にリダイレクトしない限りどこにも残らない。
+    # 1時間ごと等で長期間動かし続ける運用を想定し、スクリプト側で確実にファイルへ
+    # 記録するようにする。1ファイルに全実行分を追記していくと際限なく肥大化するため、
+    # サイズベースでローテーションする(5MB×5世代を上限とする)。
+    os.makedirs(LOG_DIR, exist_ok=True)
+    file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    console_handler = logging.StreamHandler()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[file_handler, console_handler],
+    )
 
 
 def main():
     setup_logger()
-    logging.info("run_sentiment_pipeline.py ver1.0")
+    logging.info("run_sentiment_pipeline.py ver1.1")
 
     parser = argparse.ArgumentParser(description="ニュースセンチメントの定期集計パイプライン")
     # 💡 条件6: ExpertTraderと異なり、short(スキャルピング帯)は対象外。
