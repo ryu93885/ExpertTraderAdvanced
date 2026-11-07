@@ -37,6 +37,21 @@ RSS_FEEDS = [
     ("FXStreet - News", "https://www.fxstreet.com/rss/news"),
 ]
 
+# 💡 追加(2026-11-07の実機検証で判明): feedparser.parse(url)をヘッダー無しで
+# 呼ぶと、feedparser標準のUser-Agent(ブラウザではないと分かる文字列)がサイト側の
+# bot対策(Cloudflare等)に弾かれ、RSS本来の内容の代わりにエラー/チャレンジページが
+# 返ってくることがある。実機検証では4フィード中DailyFXでXMLパース失敗
+# (「not well-formed」、典型的なブロックページ特有の症状)が発生し、残り3フィードも
+# 含めて計0件という結果になった。実在のブラウザに近いヘッダーを明示的に付与する
+# ことで、この種のブロックを避ける。
+REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+}
+
 
 @dataclass
 class NewsArticle:
@@ -84,15 +99,25 @@ class RSSNewsSource(NewsSource):
 
     def _parse_feed(self, source_label: str, url: str, since: datetime) -> List[NewsArticle]:
         try:
-            parsed = feedparser.parse(url)
+            parsed = feedparser.parse(url, request_headers=REQUEST_HEADERS)
         except Exception as e:
             logger.warning(f"⚠️ [{source_label}] フィード取得に失敗しました({url}): {e}")
             return []
 
+        # 💡 追加: HTTPステータスが取れる場合は常にログへ残す。bot対策等でブロック
+        # されている場合、本文はパースできてもステータスが200以外(403/429等)に
+        # なることが多く、「正常に0件だった」のか「ブロックされて0件だった」のかを
+        # 後からログだけで区別できるようにする。
+        status = getattr(parsed, "status", None)
+
         if getattr(parsed, "bozo", False) and not parsed.entries:
-            logger.warning(f"⚠️ [{source_label}] フィードの解析に失敗した可能性があります({url}): {getattr(parsed, 'bozo_exception', '')}")
+            logger.warning(
+                f"⚠️ [{source_label}] フィードの解析に失敗した可能性があります"
+                f"(status={status}, {url}): {getattr(parsed, 'bozo_exception', '')}"
+            )
             return []
 
+        raw_count = len(parsed.entries)
         results = []
         for entry in parsed.entries:
             published = self._extract_published(entry)
@@ -105,6 +130,15 @@ class RSSNewsSource(NewsSource):
                 source=source_label,
                 url=entry.get("link", ""),
             ))
+
+        # 💡 追加: 以前はここで何もログを残していなかったため、「本当に新着が無い」
+        # のか「ブロック等で空の応答が返ってきている」のかがログから区別できなかった。
+        if raw_count == 0:
+            logger.warning(f"⚠️ [{source_label}] 取得した記事が0件でした(status={status}, {url})。"
+                            f"サイト側でブロックされていないか確認してください")
+        else:
+            logger.info(f"  [{source_label}] status={status}, 取得{raw_count}件中{len(results)}件が対象期間内")
+
         return results
 
     @staticmethod
