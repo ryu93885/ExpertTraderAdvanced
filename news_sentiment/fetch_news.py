@@ -30,10 +30,22 @@ logger = logging.getLogger(__name__)
 # 💡 収集対象のRSSフィード一覧。(source_label, url) のタプルで管理する。
 # 疎通確認が取れていない場合に備え、1つのフィードが失敗しても他のフィードの
 # 取得は続行する(_parse_feed内でtry/exceptしている)。
+#
+# 💡 修正(2026-11-07の実機検証で判明): 当初は以下の4フィードだったが、
+# 診断ログ(newest_published)を追加した上での実行結果、以下の2件を除外した。
+#   - DailyFX ("https://www.dailyfx.com/feeds/all"): ブラウザ風ヘッダーを
+#     付与しても status=403 で継続的にブロックされ、XMLとして「mismatched tag」
+#     になる(典型的なブロックページの症状)。ヘッダー変更では解消しなかった。
+#   - Investing.com ("https://www.investing.com/rss/news_285.rss"): status=200で
+#     ブロックはされていないが、取得できる最新記事が2024-11-26と**約2年前**で
+#     固定されていた。非ブラウザのクライアントに古い/静的なスナップショットを
+#     返している(あるいは単純にフィード自体が更新停止している)とみられる。
+# 残るForexLive/FXStreetは、同じ実機検証で「status=200/301・最新記事が実行時刻の
+# 6〜8時間前」という正常な(週末でニュース自体が少なかっただけの)挙動を示しており、
+# 問題なく機能している。別のソースを追加して冗長性を持たせたい場合は、実際に
+# ブラウザで記事が新しいか確認した上でこのリストに追加すること。
 RSS_FEEDS = [
     ("ForexLive", "https://www.forexlive.com/feed/news"),
-    ("DailyFX", "https://www.dailyfx.com/feeds/all"),
-    ("Investing.com - Forex News", "https://www.investing.com/rss/news_285.rss"),
     ("FXStreet - News", "https://www.fxstreet.com/rss/news"),
 ]
 
