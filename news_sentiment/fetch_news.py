@@ -119,8 +119,13 @@ class RSSNewsSource(NewsSource):
 
         raw_count = len(parsed.entries)
         results = []
+        newest_published = None  # 💡 追加: 対象期間外で捨てた記事も含め、取得できた
+        # 記事の中で最も新しい日時を記録する。これにより「本当にすべて古かった」のか
+        # 「日時のパース自体に失敗している(Noneのまま)」のかをログだけで切り分けられる。
         for entry in parsed.entries:
             published = self._extract_published(entry)
+            if published is not None and (newest_published is None or published > newest_published):
+                newest_published = published
             if published is None or published < since:
                 continue
             results.append(NewsArticle(
@@ -136,6 +141,14 @@ class RSSNewsSource(NewsSource):
         if raw_count == 0:
             logger.warning(f"⚠️ [{source_label}] 取得した記事が0件でした(status={status}, {url})。"
                             f"サイト側でブロックされていないか確認してください")
+        elif len(results) == 0:
+            # 💡 対象期間内の記事が0件でも、raw_count>0なら異常ではない可能性が高い
+            # (newest_publishedがsinceのすぐ外側なら「本当に新着が無かった」だけ、
+            # Noneのままなら日時のパース自体に失敗している可能性が高い)。
+            logger.info(
+                f"  [{source_label}] status={status}, 取得{raw_count}件中0件が対象期間内"
+                f"(最新記事の日時={newest_published}, since={since})"
+            )
         else:
             logger.info(f"  [{source_label}] status={status}, 取得{raw_count}件中{len(results)}件が対象期間内")
 
