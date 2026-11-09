@@ -18,7 +18,12 @@ from news_sentiment.fetch_news import NewsArticle
 # (他の単語の一部に含まれる等)ため、識別力の高い語(国名・中銀名・通貨名の
 # フルスペル等)を中心に構成している。
 CURRENCY_KEYWORDS: Dict[str, List[str]] = {
-    "USD": ["usd", "u.s. dollar", "us dollar", "dollar", "federal reserve", "the fed",
+    # 💡 修正(2026-11-10の実機データで判明した誤検出への対応): 汎用的な"dollar"
+    # (国名の修飾語なし)をUSDのキーワードに含めていたため、"New Zealand Dollar"
+    # 等、他国の「~ドル」を指す記事がUSDとしても誤タグ付けされていた(実例:
+    # NZD/RBNZに関する記事がUSDとしても集計されてしまっていた)。"us dollar"/
+    # "u.s. dollar"/"usd"等の、USDであることが明確な語のみを残す。
+    "USD": ["usd", "u.s. dollar", "us dollar", "federal reserve", "the fed",
             "fomc", "united states", "u.s. economy", "non-farm payroll", "nonfarm payroll"],
     "EUR": ["eur", "euro", "eurozone", "european central bank", "ecb", "european union"],
     "GBP": ["gbp", "pound sterling", "british pound", "bank of england", "boe", "uk economy", "united kingdom"],
