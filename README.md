@@ -63,6 +63,7 @@ ExpertTrader側で銘柄ごとに独立したスケーラー・分析モデル�
 pip install -r requirements.txt
 python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
 # -> sentiment_output/news_sentiment_medium.csv に1行追記される
+# -> sentiment_output/raw_articles_medium.csv に記事単位のデータが追記される(重複除外済み)
 ```
 
 どのディレクトリから実行してもよい(スクリプト自身の位置からリポジトリルートを
@@ -73,6 +74,32 @@ cron(VPS)やタスクスケジューラ(ローカルPC)で定期実行する想�
 実行ログは`logs/run_sentiment_pipeline.log`に自動保存される(5MB×5世代でローテーション。
 コンソール出力が残らないcron/タスクスケジューラ環境でも、常にファイルで確認できる)。
 
+### 記事データの蓄積とバックアップ(--backup-dir)
+
+RSSフィードは直近の記事しか取得できず、一度流れた記事は再取得できないため、
+記事単位のデータ(`raw_articles_{mode}.csv`: title・summary・url・source・published・
+currency・compound_sentiment)を重複除外しながら蓄積している。将来、FinBERTの
+差し替えやキーワード判定(`currency_tags.py`)の改善を行う際、過去の記事に対して
+再計算するために必要。
+
+ローカルPC/VPS運用では、ローカル・GitHub・Google Drive間の手動操作を完全には
+無くせないため、`--backup-dir`で複製先ディレクトリを指定すると、出力ファイル
+(集計結果CSV・記事単位CSV)を**プログラム内で2か所に書き込む**(既存の
+`rclone`等によるDrive同期フォルダ配下を指定すれば、Driveへのバックアップも
+自動的に行われる)。省略時は従来通り1か所のみへの保存。
+
+```bash
+python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6 \
+    --backup-dir "C:\path\to\rclone-synced-folder"
+```
+
+⚠️ 2026-11-10時点では、`ExpertTraderAdvanced`自体はまだrcloneの同期対象に入っていない
+(`ExpertTrader`配下の`datafetch_modeltrain`のみが同期対象)。そのため、当面は
+`--backup-dir`に`ExpertTrader`側の同期済みフォルダ配下の専用サブフォルダ
+(例: `...\ExpertTrader\datafetch_modeltrain\sentiment_backup`)を指定することで、
+rcloneの設定変更なしにバックアップを機能させられる。`ExpertTraderAdvanced`自体を
+rcloneの同期対象に加えれば、そちらを指定する形に変更してよい。
+
 ## 定期実行の設定
 
 ### cron (VPS / Linuxサーバー)
@@ -81,7 +108,7 @@ cron(VPS)やタスクスケジューラ(ローカルPC)で定期実行する想�
 ニュースで実行):
 
 ```cron
-5 * * * * cd /path/to/ExpertTraderAdvanced && /path/to/venv/bin/python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 1.5 >> logs/cron_stdout.log 2>&1
+5 * * * * cd /path/to/ExpertTraderAdvanced && /path/to/venv/bin/python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 1.5 --backup-dir /path/to/rclone-synced-folder >> logs/cron_stdout.log 2>&1
 ```
 
 - `cd`でリポジトリルートに移動してから実行する(`sentiment_output/`・`logs/`は
@@ -105,7 +132,7 @@ cron(VPS)やタスクスケジューラ(ローカルPC)で定期実行する想�
 4. 「操作」タブ: 新規作成 →
    - プログラム/スクリプト: 仮想環境の`python.exe`へのフルパス
      (例: `C:\path\to\venv\Scripts\python.exe`)
-   - 引数の追加: `scripts\run_sentiment_pipeline.py --mode medium --lookback-hours 1.5`
+   - 引数の追加: `scripts\run_sentiment_pipeline.py --mode medium --lookback-hours 1.5 --backup-dir "C:\path\to\rclone-synced-folder"`
    - 開始(作業)フォルダー: リポジトリのルートフォルダ(例: `C:\path\to\ExpertTraderAdvanced`)
      ← これを必ず設定する。空のままだとスクリプトが相対パスで探す
      `sentiment_output/`・`logs/`が別の場所に作られてしまう
@@ -117,6 +144,8 @@ cron(VPS)やタスクスケジューラ(ローカルPC)で定期実行する想�
 - センチメントの集計結果: `sentiment_output/news_sentiment_{mode}.csv`に1実行=1行で
   追記され続ける。`time`列で時系列に並んでいるので、Excel/pandasで開いて
   推移を確認できる。
+- 記事単位のデータ: `sentiment_output/raw_articles_{mode}.csv`に、重複除外した
+  記事が追記され続ける。
 - 実行ログ: `logs/run_sentiment_pipeline.log`(最新)。featureごとの記事取得件数や
   warning(例: 特定フィードの取得失敗、対象期間の記事0件)もここに残る。
   特に立ち上げ直後は、記事件数が極端に少ない/0が続いていないか数回分を見て、
@@ -146,3 +175,8 @@ cron(VPS)やタスクスケジューラ(ローカルPC)で定期実行する想�
   DailyFXは継続的にブロックされ(status=403)、Investing.comは取得内容が
   2年前の記事で固定されている(status=200だが実質的に死んでいるフィード)
   ことが判明したため、この2件を`RSS_FEEDS`から除外した。
+- 2026-11-10: 市場再開後の実行で、2フィードから実際に記事が取得できることを
+  再確認(週末の記事減少が原因だったという前回の判断が裏付けられた)。また、
+  記事単位データの蓄積機能(`append_raw_articles`)を追加し、重複除外ロジック
+  (実機と同じ形の検証データで、新規記事のみが追記されること・CSV往復後の
+  日時比較でも正しく重複検出できることを確認)。

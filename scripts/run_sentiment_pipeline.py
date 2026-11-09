@@ -9,6 +9,11 @@ portfolio_trading_bot.pyのような常駐プロセス方式ではなく、cron�
 実行例(どのディレクトリから実行しても動く。python -m scripts.run_sentiment_pipeline
 でも実行できるが、その場合はリポジトリルートをカレントディレクトリにする必要がある):
     python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
+
+rclone等でGoogle Driveへ同期しているローカルフォルダがあれば、--backup-dirで
+指定すると、出力ファイル(集計結果CSV・記事単位CSV)をそこにも複製する:
+    python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6 \
+        --backup-dir "C:\\path\\to\\rclone-synced-folder"
 """
 
 import argparse
@@ -32,7 +37,7 @@ if _REPO_ROOT not in sys.path:
 
 from news_sentiment.fetch_news import RSSNewsSource
 from news_sentiment.sentiment_model import FinBertSentimentModel
-from news_sentiment.aggregate import run_aggregation, append_to_csv
+from news_sentiment.aggregate import run_aggregation, append_to_csv, append_raw_articles
 
 DEFAULT_SYMBOLS = ["GBPUSD", "EURUSD", "USDJPY", "AUDUSD", "GBPJPY", "EURJPY", "GOLD"]
 OUTPUT_DIR = "sentiment_output"
@@ -60,7 +65,7 @@ def setup_logger():
 
 def main():
     setup_logger()
-    logging.info("run_sentiment_pipeline.py ver1.1")
+    logging.info("run_sentiment_pipeline.py ver1.2")
 
     parser = argparse.ArgumentParser(description="ニュースセンチメントの定期集計パイプライン")
     # 💡 条件6: ExpertTraderと異なり、short(スキャルピング帯)は対象外。
@@ -71,12 +76,26 @@ def main():
     parser.add_argument("--lookback-hours", type=float, default=6.0,
                          help="何時間前までの記事を対象にするか")
     parser.add_argument("--output-csv", type=str, default=None,
-                         help="出力CSVのパス。省略時は sentiment_output/news_sentiment_{mode}.csv")
+                         help="集計結果CSVのパス。省略時は sentiment_output/news_sentiment_{mode}.csv")
+    parser.add_argument("--raw-articles-csv", type=str, default=None,
+                         help="記事単位データCSVのパス。省略時は sentiment_output/raw_articles_{mode}.csv")
+    # 💡 追加(2026-11-10): ローカルPC/VPS運用では、手動でのファイル移動・同期作業を
+    # 完全には無くせない(ローカル・GitHub・Google Drive間を行き来する構成のため)。
+    # 既存のrclone等によるDrive同期フォルダを指定すれば、出力ファイルをそこにも
+    # 書き込む(プログラム内で2か所に保存する)ことで、記事データの消失を防ぐ。
+    # 省略時は従来通り1か所のみへの保存(この機能が無い環境でも影響しない)。
+    parser.add_argument("--backup-dir", type=str, default=None,
+                         help="出力ファイルの複製先ディレクトリ(例: rcloneがDriveへ同期して"
+                              "いるローカルフォルダ)。省略時はバックアップしない")
     args = parser.parse_args()
 
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     output_csv = args.output_csv or os.path.join(OUTPUT_DIR, f"news_sentiment_{args.mode}.csv")
+    raw_articles_csv = args.raw_articles_csv or os.path.join(OUTPUT_DIR, f"raw_articles_{args.mode}.csv")
     os.makedirs(os.path.dirname(output_csv) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(raw_articles_csv) or ".", exist_ok=True)
+    if args.backup_dir:
+        os.makedirs(args.backup_dir, exist_ok=True)
 
     since = datetime.now(timezone.utc) - timedelta(hours=args.lookback_hours)
 
@@ -91,9 +110,16 @@ def main():
     model = FinBertSentimentModel()
 
     logging.info("📊 センチメントを集計中...")
-    result_df = run_aggregation(articles, model, symbols)
+    result_df, scored_df = run_aggregation(articles, model, symbols)
 
     append_to_csv(result_df, output_csv)
+    append_raw_articles(scored_df, raw_articles_csv)
+
+    if args.backup_dir:
+        logging.info(f"📥 バックアップ先にも保存します: {args.backup_dir}")
+        append_to_csv(result_df, os.path.join(args.backup_dir, os.path.basename(output_csv)))
+        append_raw_articles(scored_df, os.path.join(args.backup_dir, os.path.basename(raw_articles_csv)))
+
     logging.info("✨ パイプライン完了")
 
 
