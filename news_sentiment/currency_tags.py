@@ -29,7 +29,15 @@ CURRENCY_KEYWORDS: Dict[str, List[str]] = {
     "GBP": ["gbp", "pound sterling", "british pound", "bank of england", "boe", "uk economy", "united kingdom"],
     "JPY": ["jpy", "japanese yen", "yen", "bank of japan", "boj", "japan economy"],
     "AUD": ["aud", "australian dollar", "reserve bank of australia", "rba", "australia economy"],
-    "GOLD": ["gold", "xau", "bullion", "precious metal", "safe haven", "safe-haven"],
+    # 💡 修正(2026-11-13の実機データ・追加検証で判明した誤検出への対応):
+    # "safe haven"/"safe-haven"はJPY・USD・CHF等にも日常的に使われる汎用語で
+    # あり、GOLDに一切言及していない記事でも誤タグ付けされていた(実例:
+    # raw_articles_medium.csvの実データで、USD単体の記事が"safe-haven"により
+    # GOLDにも誤って集計されていた)。"precious metal"も銀・白金等、GOLD以外の
+    # 貴金属の記事にも使われるため同様に除外する。"gold"そのものにも
+    # "gold standard"(比喩表現)等の誤検出リスクが残るが、XAU/bullionと比べ
+    # どれだけ実害があるか実データでの追加確認が必要なため、今回はそのまま残す。
+    "GOLD": ["gold", "xau", "bullion"],
 }
 
 
