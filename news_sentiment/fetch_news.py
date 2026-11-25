@@ -15,6 +15,14 @@
 上、これらの外部サイトに直接接続できず疎通確認ができていないため、実際に
 ローカルPC/VPSで実行する際に、必ず一度動作確認してください。フィードが無効化
 されていた場合はRSS_FEEDSのリストから該当URLを削除/差し替えるだけでよい。
+
+💡 追加(2026-11-25): GDELT Project(https://www.gdeltproject.org/)のDOC 2.0 APIを
+使った GDELTNewsSource を追加した。RSSが「直近の記事しか取得できず、過去に遡れない」
+弱点を補う目的で、過去の記事を遡及収集(バックフィル)する用途を主眼にしている。
+ただし、GDELTの公式ドキュメントページ自体にも、本セッションのネットワークポリシー上
+直接接続できず最終確認ができていない(RSS_FEEDS同様の制約)。パラメータ名・日付形式・
+1回のリクエストで遡れる最大期間・レート制限は、複数の公開情報を基にした現時点での
+最善の理解であり、実際にローカルPC/VPSで実行する際に必ず一度動作確認してください。
 """
 
 import logging
@@ -24,6 +32,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import feedparser
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +183,117 @@ class RSSNewsSource(NewsSource):
             if t:
                 return datetime(*t[:6], tzinfo=timezone.utc)
         return None
+
+
+# 💡 GDELTのクエリ構文(ブール演算子・フレーズ検索)で、FX/マクロ経済に関連しそうな
+# 記事を広めに拾う。厳密な通貨の絞り込みはcurrency_tags.py側で行うため、ここでは
+# 「FX/マクロ関連かどうか」の大まかな事前フィルタとして機能すればよい。
+DEFAULT_GDELT_QUERY = (
+    '(forex OR "foreign exchange" OR "exchange rate" OR "interest rate" OR '
+    '"central bank" OR "federal reserve" OR inflation OR "non-farm payroll")'
+)
+
+
+class GDELTNewsSource(NewsSource):
+    """
+    GDELT Project (https://www.gdeltproject.org/) のDOC 2.0 API
+    (https://api.gdeltproject.org/api/v2/doc/doc) を使った実装。
+
+    RSSNewsSourceと違い、startdatetime/enddatetimeを指定して任意の過去の期間を
+    検索できる(fetch_range参照)。これにより、RSSでは不可能だった記事の遡及収集
+    (バックフィル)が可能になる。ただし実際にどこまで遡れるか・1リクエストで
+    返る最大件数は、GDELT API側の仕様変更に左右される(ファイル冒頭の注意書き参照)。
+
+    💡 重要な制約: このAPIが返すのは記事のtitle・url・メタデータのみで、RSSの
+    summary(要約本文)に相当するものは含まれない。そのためfull_textはtitleのみに
+    なり、RSS由来の記事(title+summary)よりFinBERTへの入力情報がやや乏しくなる。
+    これは意図的な設計判断であり(記事本文を毎回スクレイピングすると、DailyFX/
+    Investing.comで経験したのと同種のブロック・サイト構造変化のリスクを再び
+    抱えることになるため)、まずはtitleのみで実用上十分か検証し、不十分であれば
+    本文取得の追加を検討する。
+    """
+
+    BASE_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+    # 💡 GDELT DOC APIの1リクエストあたりの最大取得件数(複数の公開情報を基にした
+    # 想定値。実機で要確認)。この件数に達した場合、取りこぼしの可能性をログで警告する。
+    MAX_RECORDS_PER_REQUEST = 250
+
+    def __init__(self, query: str = DEFAULT_GDELT_QUERY, timeout: int = 30):
+        self.query = query
+        self.timeout = timeout
+
+    def fetch_recent(self, since: datetime) -> List[NewsArticle]:
+        """sinceから現在時刻までを取得する(定期実行での通常利用向け)。"""
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        return self.fetch_range(since, datetime.now(timezone.utc))
+
+    def fetch_range(self, start: datetime, end: datetime) -> List[NewsArticle]:
+        """
+        指定した期間の記事を取得する(過去データの遡及収集=バックフィル向けに
+        外部から直接呼ぶことを想定)。1リクエストで返せる件数に上限があるため、
+        長い期間を一度に指定する場合は呼び出し側(バックフィルスクリプト)で
+        期間を細かく分割して複数回呼ぶこと(このメソッド自体は単純に1期間=
+        1リクエストのままにしている)。
+        """
+        params = {
+            "query": self.query,
+            "mode": "artlist",
+            "format": "json",
+            "maxrecords": str(self.MAX_RECORDS_PER_REQUEST),
+            "sort": "dateasc",
+            "startdatetime": start.strftime("%Y%m%d%H%M%S"),
+            "enddatetime": end.strftime("%Y%m%d%H%M%S"),
+        }
+        try:
+            response = requests.get(self.BASE_URL, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            logger.warning(f"⚠️ [GDELT] 取得に失敗しました({start}〜{end}): {e}")
+            return []
+
+        raw_articles = data.get("articles", []) or []
+        results = []
+        skipped_non_english = 0
+        for item in raw_articles:
+            # 💡 FinBERT・currency_tags.pyはどちらも英語前提のため、英語以外の記事は
+            # 除外する(クエリ側での言語指定もGDELT仕様の確証が取れていないため、
+            # 念のためレスポンス側でも二重にチェックする)。
+            language = (item.get("language") or "").strip().lower()
+            if language and language not in ("english", "eng", "en"):
+                skipped_non_english += 1
+                continue
+            published = self._parse_seendate(item.get("seendate"))
+            if published is None:
+                continue
+            results.append(NewsArticle(
+                title=(item.get("title") or "").strip(),
+                summary="",  # 💡 GDELT DOC APIは記事本文・要約を提供しないため空のまま
+                published=published,
+                source=f"GDELT:{item.get('domain', 'unknown')}",
+                url=item.get("url", ""),
+            ))
+
+        if len(raw_articles) >= self.MAX_RECORDS_PER_REQUEST:
+            logger.warning(
+                f"⚠️ [GDELT] {start}〜{end}の取得件数が上限({self.MAX_RECORDS_PER_REQUEST}件)に"
+                "達した可能性があります。この期間に記事の取りこぼしがあるかもしれません"
+                "(バックフィル側で期間をより細かく分割することを検討してください)。"
+            )
+        logger.info(
+            f"📰 [GDELT] 取得完了: {len(results)}件({start}〜{end}、"
+            f"非英語除外{skipped_non_english}件)"
+        )
+        return results
+
+    @staticmethod
+    def _parse_seendate(seendate: Optional[str]) -> Optional[datetime]:
+        """GDELTのseendateは "20261124T120000Z" 形式(要実機確認)。"""
+        if not seendate:
+            return None
+        try:
+            return datetime.strptime(seendate, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            logger.warning(f"⚠️ [GDELT] seendateのパースに失敗しました: {seendate!r}")
+            return None

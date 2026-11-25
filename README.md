@@ -45,6 +45,42 @@ scripts/
 下記「動作確認済み事項」を参照)。別のソースを追加して冗長性を高めたい場合は、
 実際にブラウザ等で記事が新しいことを確認した上で`RSS_FEEDS`に追加すること。
 
+### GDELT Project(過去データの遡及収集)
+
+RSSは直近の記事しか取得できず、一度流れた記事は再取得できないという制約がある
+(「動作確認済み事項」参照)。この弱点を補うため、[GDELT Project](https://www.gdeltproject.org/)
+のDOC 2.0 APIを使った`GDELTNewsSource`を追加した。`startdatetime`/`enddatetime`を
+指定して任意の過去の期間を検索できるため、過去データの遡及収集(バックフィル)に使う。
+
+⚠️ **重要な制約**: GDELTのDOC APIが返すのは記事のtitle・url・メタデータのみで、
+RSSのsummary(要約本文)に相当するものは含まれない。そのため、GDELT由来の記事は
+title単体でFinBERTに入力され、RSS由来(title+summary)より入力情報がやや乏しくなる。
+意図的な設計判断であり(記事本文を毎回スクレイピングすると、DailyFX/Investing.comで
+経験したのと同種のブロック・サイト構造変化のリスクを再び抱えることになるため)、
+まずはtitleのみで実用上十分か検証する方針。
+
+⚠️ 本リポジトリのRSS_FEEDS同様、GDELTのAPI仕様(パラメータ名・日付形式・1リクエストで
+遡れる最大期間・レート制限)についても、本セッション(Claude Codeのサンドボックス環境)は
+ネットワークポリシー上、GDELTの公式ドキュメントページに直接接続できず最終確認が
+できていない。実際にローカルPC/VPSで実行する際に、必ず一度動作確認すること。
+
+**通常の定期実行でRSSと併用する場合:**
+```bash
+python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6 --sources rss,gdelt
+```
+`--sources`省略時はrssのみ(従来通りの挙動)。
+
+**過去データのバックフィル:**
+```bash
+python scripts/backfill_gdelt_history.py --mode medium \
+    --start-date 2024-01-01 --end-date 2024-06-01 --bucket-hours 24
+```
+指定した期間を`--bucket-hours`(既定24時間)ごとに区切り、1区切り=1行として
+`news_sentiment_{mode}.csv`に追記する(そうしないと全期間が1行に潰れ、時系列
+データとして使えなくなるため)。中断しても同じコマンドを再実行すれば、既に
+処理済みの区間をスキップして続きから進む。GDELT APIへの負荷軽減のため、
+区切りごとに`--sleep-seconds`(既定1秒)だけ待機する。
+
 ### 通貨ペア vs 通貨単位での集計について
 
 ExpertTraderの対象7銘柄(GBPUSD, EURUSD, USDJPY, AUDUSD, GBPJPY, EURJPY, GOLD)は、
@@ -160,6 +196,17 @@ rcloneの同期対象に加えれば、そちらを指定する形に変更し�
 - ExpertTrader本体との実際の統合(本リポジトリのCSV出力を、ExpertTrader側の
   `PortfolioFXEnv`の観測ベクトルにどう組み込むか)は未着手(条件5の「将来的な
   組み合わせ」に該当。今回は受け入れやすい出力形式の設計までが範囲)。
+- GDELT DOC APIの実機確認が未実施(本セッションのネットワークポリシー上、公式
+  ドキュメントに直接接続できず、パラメータ名・日付形式・遡れる最大期間・
+  レート制限が現時点では複数の公開情報を基にした推定。実際にローカルPC/VPSで
+  一度動作確認し、必要ならfetch_news.py内のコメント・定数を実機の挙動に合わせて
+  修正すること)。
+- RSSとGDELTの両方で同じ記事が重複して拾われた場合、sourceラベルが異なる
+  (例: RSS側は"ForexLive"、GDELT側は"GDELT:forexlive.com")ため、
+  raw_articles_{mode}.csvの重複除外ロジック(source, title, publishedの組)が
+  この重複を検出できず、二重計上され得る。実害(集計結果への影響度)は小さいと
+  見ているが、気になる場合はGDELT側のdomainを基にRSSと同じsourceラベルへ
+  正規化する対応を検討する。
 
 ## 動作確認済み事項
 

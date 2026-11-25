@@ -35,12 +35,22 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from news_sentiment.fetch_news import RSSNewsSource
+from news_sentiment.fetch_news import RSSNewsSource, GDELTNewsSource
 from news_sentiment.sentiment_model import FinBertSentimentModel
 from news_sentiment.aggregate import run_aggregation, append_to_csv, append_raw_articles
 
 DEFAULT_SYMBOLS = ["GBPUSD", "EURUSD", "USDJPY", "AUDUSD", "GBPJPY", "EURJPY", "GOLD"]
 OUTPUT_DIR = "sentiment_output"
+
+# 💡 追加(2026-11-25): RSS(低遅延だが過去に遡れない)とGDELT(過去に遡れるが
+# 処理に遅延があり個別の小規模ソースを必ず拾える保証はない)は、互いの弱点を補う
+# 関係にあるため、どちらも/両方を選べるようにする。NewsSourceの共通インターフェース
+# のおかげで、articlesリストを単純に連結するだけで両方の結果を同じパイプライン
+# (currency_tags.py・FinBERT・aggregate.py)にそのまま流せる。
+SOURCE_FACTORIES = {
+    "rss": RSSNewsSource,
+    "gdelt": GDELTNewsSource,
+}
 
 
 LOG_DIR = "logs"
@@ -65,7 +75,7 @@ def setup_logger():
 
 def main():
     setup_logger()
-    logging.info("run_sentiment_pipeline.py ver1.2")
+    logging.info("run_sentiment_pipeline.py ver1.3")
 
     parser = argparse.ArgumentParser(description="ニュースセンチメントの定期集計パイプライン")
     # 💡 条件6: ExpertTraderと異なり、short(スキャルピング帯)は対象外。
@@ -79,6 +89,11 @@ def main():
                          help="集計結果CSVのパス。省略時は sentiment_output/news_sentiment_{mode}.csv")
     parser.add_argument("--raw-articles-csv", type=str, default=None,
                          help="記事単位データCSVのパス。省略時は sentiment_output/raw_articles_{mode}.csv")
+    # 💡 追加(2026-11-25): RSSとGDELTを併用できるようにする。デフォルトはrssのみ
+    # (従来通りの挙動)。両方使う場合は --sources rss,gdelt のように指定する。
+    parser.add_argument("--sources", type=str, default="rss",
+                         help=f"使用するニュース取得元(カンマ区切り、{','.join(SOURCE_FACTORIES)}から選択)。"
+                              "省略時はrssのみ(従来通り)")
     # 💡 追加(2026-11-10): ローカルPC/VPS運用では、手動でのファイル移動・同期作業を
     # 完全には無くせない(ローカル・GitHub・Google Drive間を行き来する構成のため)。
     # 既存のrclone等によるDrive同期フォルダを指定すれば、出力ファイルをそこにも
@@ -99,9 +114,18 @@ def main():
 
     since = datetime.now(timezone.utc) - timedelta(hours=args.lookback_hours)
 
-    logging.info(f"📡 ニュースを収集中(過去{args.lookback_hours}時間分)...")
-    source = RSSNewsSource()
-    articles = source.fetch_recent(since)
+    source_names = [s.strip().lower() for s in args.sources.split(",") if s.strip()]
+    unknown = [s for s in source_names if s not in SOURCE_FACTORIES]
+    if unknown:
+        logging.error(f"❌ 未知のニュース取得元が指定されました: {unknown}(有効な値: {list(SOURCE_FACTORIES)})")
+        return
+
+    logging.info(f"📡 ニュースを収集中(過去{args.lookback_hours}時間分、取得元={source_names})...")
+    articles = []
+    for name in source_names:
+        src_articles = SOURCE_FACTORIES[name]().fetch_recent(since)
+        logging.info(f"  [{name}] {len(src_articles)}件")
+        articles.extend(src_articles)
 
     if not articles:
         logging.warning("⚠️ 対象期間内の記事が0件でした。センチメントはすべて0(ニュートラル)として記録します。")
