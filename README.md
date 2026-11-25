@@ -95,9 +95,43 @@ ExpertTrader側で銘柄ごとに独立したスケーラー・分析モデル�
 
 ## 使い方
 
+### 環境構築(初回のみ)
+
+リポジトリ専用の仮想環境(`venv`)を**リポジトリのルートフォルダ内に**作成してから、
+依存パッケージをインストールする。
+
 ```bash
-pip install -r requirements.txt
-python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
+cd /path/to/ExpertTraderAdvanced
+python -m venv venv
+```
+
+```bash
+# Linux/Mac
+venv/bin/python -m pip install -r requirements.txt
+```
+
+```
+:: Windows
+venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+⚠️ **`python -m venv venv`は、必ずリポジトリのルートフォルダに`cd`してから実行すること。**
+Windowsで「管理者として実行」したコマンドプロンプトは既定のカレントディレクトリが
+`C:\Windows\System32`になっていることが多く、この状態で相対パス`venv`を指定すると、
+仮想環境そのものが`C:\Windows\System32\venv`に作られてしまう(2026-11-25に実際に発生。
+下記「動作確認済み事項」参照)。この場所はWindowsの保護対象フォルダのため、以後の
+`pip install`が`OSError: [WinError 5] アクセスが拒否されました`で失敗する。`cd`の後に
+`echo %cd%`(Windows)/`pwd`(Linux/Mac)でカレントディレクトリを確認してから実行すると安全。
+誤って`C:\Windows\System32\venv`に作ってしまった場合は、正しい場所に作り直せばよい
+(System32側は放置しても実害は無いが、気になる場合は管理者権限で削除してよい)。
+
+### 実行
+
+以後、本リポジトリのスクリプトは上記venv内のPythonで実行する(カレントディレクトリに
+依存しないよう、フルパス指定が確実)。
+
+```bash
+venv/bin/python scripts/run_sentiment_pipeline.py --mode medium --lookback-hours 6
 # -> sentiment_output/news_sentiment_medium.csv に1行追記される
 # -> sentiment_output/raw_articles_medium.csv に記事単位のデータが追記される(重複除外済み)
 ```
@@ -167,7 +201,8 @@ rcloneの同期対象に加えれば、そちらを指定する形に変更し�
    「継続時間: 無期限」に設定
 4. 「操作」タブ: 新規作成 →
    - プログラム/スクリプト: 仮想環境の`python.exe`へのフルパス
-     (例: `C:\path\to\venv\Scripts\python.exe`)
+     (例: `C:\path\to\venv\Scripts\python.exe`。上記「環境構築(初回のみ)」で
+     作成したvenvを指定する。誤って`C:\Windows\System32\venv`等になっていないか要確認)
    - 引数の追加: `scripts\run_sentiment_pipeline.py --mode medium --lookback-hours 1.5 --backup-dir "C:\path\to\rclone-synced-folder"`
    - 開始(作業)フォルダー: リポジトリのルートフォルダ(例: `C:\path\to\ExpertTraderAdvanced`)
      ← これを必ず設定する。空のままだとスクリプトが相対パスで探す
@@ -227,3 +262,11 @@ rcloneの同期対象に加えれば、そちらを指定する形に変更し�
   記事単位データの蓄積機能(`append_raw_articles`)を追加し、重複除外ロジック
   (実機と同じ形の検証データで、新規記事のみが追記されること・CSV往復後の
   日時比較でも正しく重複検出できることを確認)。
+- 2026-11-25: タスクスケジューラ経由の定期実行で出力ファイル・ログファイルが一切
+  作られない事象が発生。調査の結果、`python -m venv venv`実行時のカレントディレクトリが
+  `C:\Windows\System32`になっていたため、仮想環境自体がそこに作られてしまっており、
+  `pip install -r requirements.txt`が`OSError: [WinError 5] アクセスが拒否されました`
+  で失敗 → 依存パッケージ不足のため、スクリプトが`import`の時点(ログ初期化より前)で
+  落ちていたことが原因と判明。リポジトリルートに`cd`してからvenvを作り直し、
+  タスクスケジューラの「プログラム/スクリプト」「開始(作業)フォルダー」双方に
+  正しいフルパスを設定することで解消した(手順は上記「環境構築(初回のみ)」参照)。
